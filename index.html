@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Churn Risk Score Model</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Schibsted+Grotesk:wght@600;700&display=swap">
+<style>
+/* Layout: findings strip, segment cards, scoring rubric beside live calculator, tier results, edge-case tests, customer table, limitations */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --fg: #14202b; --muted: #55636f; --line: #d9e0e6;
+  --churn: #b4310d; --churn-soft: #f6dcd3; --keep: #0b6e6e; --keep-soft: #d3ecec;
+  --warn: #8a5a00; --warn-soft: #f7e8c4; --accent: #1f4e79; --track: #e6ebef;
+  --font-display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1820; --surface: #16222c; --fg: #e8eef3; --muted: #9fb0bd; --line: #2a3a47;
+    --churn: #ff9a7a; --churn-soft: #3d2219; --keep: #5fd0c8; --keep-soft: #123533;
+    --warn: #f0c36a; --warn-soft: #3a2e12; --accent: #8ab8e6; --track: #223240; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1820; --surface: #16222c; --fg: #e8eef3; --muted: #9fb0bd; --line: #2a3a47;
+  --churn: #ff9a7a; --churn-soft: #3d2219; --keep: #5fd0c8; --keep-soft: #123533;
+  --warn: #f0c36a; --warn-soft: #3a2e12; --accent: #8ab8e6; --track: #223240; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5;
+  padding-block: 0 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+header { padding-top: 28px; display: flex; flex-direction: column; gap: 6px; }
+h1 { font-family: var(--font-display); font-size: clamp(26px, 4vw, 36px); line-height: 1.1; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+h2 { font-family: var(--font-display); font-size: 18px; margin: 0; text-wrap: balance; }
+h3 { font-family: var(--font-display); font-size: 16px; margin: 0; }
+.sub { color: var(--muted); max-width: 72ch; margin: 0; }
+.label { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+.hint { margin: 0; color: var(--muted); font-size: 13px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.finding { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin: 0; max-width: 90ch; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.seg { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.seg .rule { font-family: var(--font-data); font-size: 12.5px; color: var(--muted); }
+.stats { display: flex; flex-wrap: wrap; gap: 6px 18px; font-family: var(--font-data); font-size: 13px; font-variant-numeric: tabular-nums; }
+.stats b { font-weight: 500; }
+.track { height: 14px; background: var(--track); border-radius: 3px; overflow: hidden; display: flex; }
+.seg-churn { background: var(--churn); height: 100%; }
+.seg-keep { background: var(--keep); height: 100%; }
+.action { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.action .impact { color: var(--muted); font-size: 13px; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.t-wide { min-width: 720px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 500; white-space: nowrap; }
+td.n, th.n { text-align: right; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+th.n { font-family: var(--font-body); }
+.nw { white-space: nowrap; }
+.pill { display: inline-block; padding: 2px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.pill.High, .pill.yes, .pill.fail { background: var(--churn-soft); color: var(--churn); }
+.pill.Medium { background: var(--warn-soft); color: var(--warn); }
+.pill.Low, .pill.no, .pill.pass { background: var(--keep-soft); color: var(--keep); }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+select, input { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; min-height: 40px; width: 100%; }
+select:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.result { display: flex; flex-direction: column; gap: 8px; background: var(--bg); border-radius: 6px; padding: 12px; }
+.result .big { font-family: var(--font-data); font-size: 30px; font-weight: 500; line-height: 1.1; }
+.break { font-family: var(--font-data); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.msg { color: var(--churn); font-size: 13px; }
+.scorebar { display: flex; align-items: center; gap: 8px; min-width: 130px; }
+.scorebar .track { flex: 1; height: 10px; }
+.scorebar span { font-family: var(--font-data); font-size: 13px; width: 28px; text-align: right; font-variant-numeric: tabular-nums; }
+ul.lim { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; color: var(--muted); }
+ul.lim b { color: var(--fg); font-weight: 600; }
+code { font-family: var(--font-data); font-size: 13px; }
+footer { color: var(--muted); font-size: 13px; }
+a { color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) { .track div { transition: width 0.2s ease; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="label">Customer analytics · segmentation and risk scoring</span>
+    <h1>Churn Risk Score Model</h1>
+    <p class="sub">Four customer segments and a 100-point, rule-based churn-risk score built from contract type, tenure and support tickets. Every rule is listed on this page, so any score can be recalculated by hand.</p>
+  </header>
+
+  <p class="finding" id="finding"></p>
+
+  <section>
+    <h2 style="margin-bottom:10px">Customer segments</h2>
+    <div class="grid" id="segments"></div>
+  </section>
+
+  <section class="two">
+    <div class="card">
+      <div><h2>Scoring rubric</h2><p class="hint">Add the points from each row. Tiers: High 60 or more, Medium 30 to 59, Low under 30.</p></div>
+      <div class="tablewrap"><table id="rubric"></table></div>
+      <p class="hint">Payment method gets 0 points. In this sample it is tangled up with contract type (every Bank Transfer customer is on a one- or two-year plan), so it cannot be judged separately.</p>
+    </div>
+    <div class="card">
+      <div><h2>Score a customer</h2><p class="hint">Try any combination. Boundary values follow the rubric exactly.</p></div>
+      <div class="fields">
+        <div class="field"><label class="label" for="in-contract">Contract</label>
+          <select id="in-contract"><option>Month-to-Month</option><option>One Year</option><option>Two Year</option></select></div>
+        <div class="field"><label class="label" for="in-tenure">Tenure (months)</label>
+          <input id="in-tenure" type="number" min="0" step="1" value="8"></div>
+        <div class="field"><label class="label" for="in-tickets">Support tickets</label>
+          <input id="in-tickets" type="number" min="0" step="1" value="4"></div>
+      </div>
+      <div class="result" id="calc" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div><h2>Score tiers against actual churn</h2><p class="hint">How many customers in each tier actually left.</p></div>
+    <div class="tablewrap"><table id="tiers"></table></div>
+  </section>
+
+  <section class="card">
+    <div><h2>Edge-case tests</h2><p class="hint">Each row runs the scoring function with a boundary or unusual input and compares it with the answer worked out by hand from the rubric.</p></div>
+    <div class="tablewrap"><table class="t-wide" id="tests"></table></div>
+  </section>
+
+  <section class="card">
+    <h2>All customers, scored</h2>
+    <div class="tablewrap"><table class="t-wide" id="custs"></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Limitations</h2>
+    <ul class="lim">
+      <li><b>Tiny sample.</b> The data has 15 customers. One customer changes a segment's churn rate by several points.</li>
+      <li><b>The clean split is not proof.</b> Every High-tier customer churned and no Medium or Low customer did. The weights were chosen after looking at this same data, so this shows the rules describe the sample, not that they predict new customers.</li>
+      <li><b>Impact ranges are assumptions.</b> The 10–30% retention figures are placeholders for planning. They were not measured in this data and should be replaced after a real test.</li>
+      <li><b>Missing signals.</b> The data has no usage, billing disputes or competitor offers, and it is a single snapshot, so it cannot show how behavior changed before a customer left.</li>
+      <li><b>Next step.</b> Re-check the weights on a larger, held-out set of customers before using the score to decide who gets contacted.</li>
+    </ul>
+  </section>
+
+  <footer>Source: <a href="https://edvyro.in/datasets/customer_churn_sample.csv">customer_churn_sample.csv</a>, 15 customers. Builds on the Business KPI Dashboard from Task 2.</footer>
+</div>
+
+<script>
+(function () {
+  var RAW = [
+    ["CUST-1001","Basic","Month-to-Month","Credit Card",12,49.99,3,true],
+    ["CUST-1002","Pro","One Year","Bank Transfer",24,79.99,1,false],
+    ["CUST-1003","Basic","Month-to-Month","UPI",6,49.99,5,true],
+    ["CUST-1004","Enterprise","Two Year","Credit Card",36,149.99,0,false],
+    ["CUST-1005","Pro","Month-to-Month","Debit Card",8,79.99,4,true],
+    ["CUST-1006","Basic","One Year","UPI",18,49.99,2,false],
+    ["CUST-1007","Basic","Month-to-Month","Credit Card",3,49.99,6,true],
+    ["CUST-1008","Enterprise","Two Year","Bank Transfer",48,149.99,1,false],
+    ["CUST-1009","Pro","One Year","Credit Card",15,79.99,2,false],
+    ["CUST-1010","Basic","Month-to-Month","UPI",4,49.99,4,true],
+    ["CUST-1011","Enterprise","Two Year","Credit Card",30,149.99,0,false],
+    ["CUST-1012","Pro","Month-to-Month","Debit Card",14,79.99,3,true],
+    ["CUST-1013","Basic","One Year","Bank Transfer",22,49.99,1,false],
+    ["CUST-1014","Basic","Month-to-Month","UPI",2,49.99,5,true],
+    ["CUST-1015","Enterprise","Two Year","Credit Card",40,149.99,1,false]
+  ].map(function (r) {
+    return { id: r[0], plan: r[1], contract: r[2], pay: r[3], tenure: r[4], monthly: r[5], tickets: r[6], churned: r[7] };
+  });
+
+  /* ---------- Scoring rules (single source for rubric, calculator and tests) ---------- */
+  var CONTRACT_PTS = { "Month-to-Month": 40, "One Year": 15, "Two Year": 0 };
+  var TENURE_RULES = [ { label: "0–6 months", max: 6, pts: 30 }, { label: "7–12 months", max: 12, pts: 20 }, { label: "13–24 months", max: 24, pts: 10 }, { label: "25+ months", max: Infinity, pts: 0 } ];
+  var TICKET_RULES = [ { label: "5 or more", min: 5, pts: 30 }, { label: "3–4", min: 3, pts: 20 }, { label: "1–2", min: 1, pts: 10 }, { label: "0", min: 0, pts: 0 } ];
+
+  function tenurePts(t) { for (var i = 0; i < TENURE_RULES.length; i++) if (t <= TENURE_RULES[i].max) return TENURE_RULES[i].pts; }
+  function ticketPts(k) { for (var i = 0; i < TICKET_RULES.length; i++) if (k >= TICKET_RULES[i].min) return TICKET_RULES[i].pts; }
+  function valid(x) { return typeof x === "number" && isFinite(x) && x >= 0 && Math.floor(x) === x; }
+
+  function score(c) {
+    if (!c || !(c.contract in CONTRACT_PTS) || !valid(c.tenure) || !valid(c.tickets)) return null;
+    var p = { contract: CONTRACT_PTS[c.contract], tenure: tenurePts(c.tenure), tickets: ticketPts(c.tickets) };
+    return { parts: p, total: p.contract + p.tenure + p.tickets };
+  }
+  function tier(total) { return total >= 60 ? "High" : total >= 30 ? "Medium" : "Low"; }
+
+  /* ---------- Segments: first matching rule wins ---------- */
+  var SEGMENTS = [
+    { name: "Early and frustrated", rule: "tenure ≤ 12 months AND tickets ≥ 3",
+      test: function (c) { return c.tenure <= 12 && c.tickets >= 3; },
+      action: "Start proactive outreach after a customer's third ticket in the first year, and fix the top ticket causes in onboarding.",
+      lo: 0.10, hi: 0.30, kind: "recover" },
+    { name: "Month-to-month, settled", rule: "Month-to-Month AND not in the segment above",
+      test: function (c) { return c.contract === "Month-to-Month"; },
+      action: "Offer an annual-contract discount after month 12, before they reach the point of comparing alternatives.",
+      lo: 0.10, hi: 0.30, kind: "recover" },
+    { name: "Mid-term committed", rule: "One Year contract",
+      test: function (c) { return c.contract === "One Year"; },
+      action: "Contact them 60 days before renewal and suggest a two-year term. Watch for two or more tickets.",
+      kind: "protect" },
+    { name: "Long-term loyal", rule: "Two Year contract",
+      test: function (c) { return c.contract === "Two Year"; },
+      action: "Protect with a named contact and a quarterly check-in. These customers pay the most and none has left.",
+      kind: "protect" }
+  ];
+  function segOf(c) { for (var i = 0; i < SEGMENTS.length; i++) if (SEGMENTS[i].test(c)) return SEGMENTS[i]; }
+
+  var $ = function (id) { return document.getElementById(id); };
+  var money = function (x) { return "$" + x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+  var money0 = function (x) { return "$" + Math.round(x).toLocaleString("en-US"); };
+  var pct = function (n, d) { return d ? 100 * n / d : 0; };
+
+  RAW.forEach(function (c) { c.seg = segOf(c); var s = score(c); c.score = s.total; c.parts = s.parts; c.tier = tier(s.total); });
+  var totalMrr = RAW.reduce(function (s, c) { return s + c.monthly; }, 0);
+
+  /* ---------- Finding ---------- */
+  var hi = RAW.filter(function (c) { return c.tier === "High"; });
+  var hiChurn = hi.filter(function (c) { return c.churned; }).length;
+  $("finding").innerHTML = "<strong>" + hiChurn + " of " + hi.length + " High-risk customers churned</strong>, and none of the " + (RAW.length - hi.length) + " Medium or Low customers did. All of them were Month-to-Month, in their first 14 months, with 3 or more tickets. The long-term loyal segment holds " + Math.round(pct(RAW.filter(function(c){return c.seg.name==="Long-term loyal";}).reduce(function(s,c){return s+c.monthly;},0), totalMrr)) + "% of monthly revenue and has not lost a customer. This sample is small, so read the pattern as a lead to test.";
+
+  /* ---------- Segment cards ---------- */
+  var h = "";
+  SEGMENTS.forEach(function (s) {
+    var g = RAW.filter(function (c) { return c.seg === s; });
+    var ch = g.filter(function (c) { return c.churned; }).length;
+    var mrr = g.reduce(function (a, c) { return a + c.monthly; }, 0);
+    var avgScore = g.reduce(function (a, c) { return a + c.score; }, 0) / g.length;
+    var avgTen = g.reduce(function (a, c) { return a + c.tenure; }, 0) / g.length;
+    var rate = pct(ch, g.length);
+    var impact;
+    if (s.kind === "recover") {
+      impact = "Planning assumption: outreach keeps " + Math.round(s.lo * 100) + "–" + Math.round(s.hi * 100) + "% of customers who would otherwise leave. On " + money(mrr) + " a month in this segment that is " + money0(mrr * s.lo) + "–" + money0(mrr * s.hi) + " a month (" + money0(mrr * s.lo * 12) + "–" + money0(mrr * s.hi * 12) + " a year).";
+    } else {
+      impact = "No churn observed here. The aim is to keep " + money(mrr) + " a month (" + Math.round(pct(mrr, totalMrr)) + "% of all monthly revenue) from becoming a loss.";
+    }
+    h += '<article class="seg"><h3>' + s.name + '</h3><div class="rule">' + s.rule + '</div>' +
+      '<div class="stats"><span><b>' + g.length + '</b> ' + (g.length === 1 ? 'customer' : 'customers') + '</span><span><b>' + ch + '</b> churned</span><span><b>' + money(mrr) + '</b> / mo</span></div>' +
+      '<div class="track" role="img" aria-label="' + s.name + ': ' + rate.toFixed(0) + ' percent churned"><div class="seg-churn" style="width:' + rate + '%"></div><div class="seg-keep" style="width:' + (100 - rate) + '%"></div></div>' +
+      '<div class="stats"><span>Churn <b>' + rate.toFixed(0) + '%</b></span><span>Avg score <b>' + avgScore.toFixed(0) + '</b></span><span>Avg tenure <b>' + avgTen.toFixed(1) + ' mo</b></span></div>' +
+      '<div class="action"><strong>Retention action</strong><span>' + s.action + '</span><span class="impact">' + impact + '</span></div></article>';
+  });
+  $("segments").innerHTML = h;
+
+  /* ---------- Rubric ---------- */
+  var r = '<thead><tr><th>Signal</th><th>Condition</th><th class="n">Points</th></tr></thead><tbody>';
+  Object.keys(CONTRACT_PTS).forEach(function (k, i) { r += "<tr><td>" + (i === 0 ? "Contract" : "") + "</td><td>" + k + '</td><td class="n">' + CONTRACT_PTS[k] + "</td></tr>"; });
+  TENURE_RULES.forEach(function (t, i) { r += "<tr><td>" + (i === 0 ? "Tenure" : "") + "</td><td>" + t.label + '</td><td class="n">' + t.pts + "</td></tr>"; });
+  TICKET_RULES.forEach(function (t, i) { r += "<tr><td>" + (i === 0 ? "Support tickets" : "") + "</td><td>" + t.label + '</td><td class="n">' + t.pts + "</td></tr>"; });
+  r += '<tr><td><strong>Total</strong></td><td>Contract + tenure + tickets</td><td class="n">0–100</td></tr></tbody>';
+  $("rubric").innerHTML = r;
+
+  /* ---------- Calculator ---------- */
+  function calc() {
+    var t = $("in-tenure").value, k = $("in-tickets").value;
+    var c = { contract: $("in-contract").value, tenure: t === "" ? NaN : Number(t), tickets: k === "" ? NaN : Number(k) };
+    var s = score(c);
+    $("calc").innerHTML = s ?
+      '<span class="label">Risk score</span><span class="big">' + s.total + ' <span class="pill ' + tier(s.total) + '">' + tier(s.total) + '</span></span>' +
+      '<span class="break">contract ' + s.parts.contract + ' + tenure ' + s.parts.tenure + ' + tickets ' + s.parts.tickets + ' = ' + s.total + '</span>' +
+      '<span class="break">Segment: ' + (function () { var sg = segOf({ contract: c.contract, tenure: c.tenure, tickets: c.tickets }); return sg.name; })() + '</span>' :
+      '<span class="label">Risk score</span><span class="msg">Enter tenure and tickets as whole numbers of 0 or more. No score is shown until both are valid.</span>';
+  }
+  ["in-contract", "in-tenure", "in-tickets"].forEach(function (id) { $(id).addEventListener("input", calc); });
+  calc();
+
+  /* ---------- Tier results ---------- */
+  var tt = '<thead><tr><th>Tier</th><th>Score</th><th class="n">Customers</th><th class="n">Churned</th><th class="n">Churn rate</th><th class="n">Monthly revenue</th></tr></thead><tbody>';
+  [["High", "60–100"], ["Medium", "30–59"], ["Low", "0–29"]].forEach(function (t) {
+    var g = RAW.filter(function (c) { return c.tier === t[0]; });
+    var ch = g.filter(function (c) { return c.churned; }).length;
+    tt += '<tr><td><span class="pill ' + t[0] + '">' + t[0] + '</span></td><td>' + t[1] + '</td><td class="n">' + g.length + '</td><td class="n">' + ch + '</td><td class="n">' + pct(ch, g.length).toFixed(0) + '%</td><td class="n">' + money(g.reduce(function (a, c) { return a + c.monthly; }, 0)) + '</td></tr>';
+  });
+  $("tiers").innerHTML = tt + "</tbody>";
+
+  /* ---------- Edge-case tests ---------- */
+  var base = { contract: "Two Year", tenure: 30, tickets: 0 };
+  function mk(o) { return { contract: o.contract || base.contract, tenure: "tenure" in o ? o.tenure : base.tenure, tickets: "tickets" in o ? o.tickets : base.tickets }; }
+  var TESTS = [
+    ["Tenure 6 months (top of first band)", function () { return score(mk({ tenure: 6 })).parts.tenure; }, 30],
+    ["Tenure 7 months (start of second band)", function () { return score(mk({ tenure: 7 })).parts.tenure; }, 20],
+    ["Tenure 12 months", function () { return score(mk({ tenure: 12 })).parts.tenure; }, 20],
+    ["Tenure 13 months", function () { return score(mk({ tenure: 13 })).parts.tenure; }, 10],
+    ["Tenure 24 months", function () { return score(mk({ tenure: 24 })).parts.tenure; }, 10],
+    ["Tenure 25 months", function () { return score(mk({ tenure: 25 })).parts.tenure; }, 0],
+    ["Tickets 2 (top of 1–2 band)", function () { return score(mk({ tickets: 2 })).parts.tickets; }, 10],
+    ["Tickets 3 (start of 3–4 band)", function () { return score(mk({ tickets: 3 })).parts.tickets; }, 20],
+    ["Tickets 4", function () { return score(mk({ tickets: 4 })).parts.tickets; }, 20],
+    ["Tickets 5 (start of top band)", function () { return score(mk({ tickets: 5 })).parts.tickets; }, 30],
+    ["Tickets 40 (far above the top band)", function () { return score(mk({ tickets: 40 })).parts.tickets; }, 30],
+    ["Worst case: Month-to-Month, 0 months, 5 tickets", function () { return score({ contract: "Month-to-Month", tenure: 0, tickets: 5 }).total; }, 100],
+    ["Best case: Two Year, 25 months, 0 tickets", function () { return score({ contract: "Two Year", tenure: 25, tickets: 0 }).total; }, 0],
+    ["New and frustrated on a Two Year contract (1 month, 6 tickets)", function () { var s = score({ contract: "Two Year", tenure: 1, tickets: 6 }); return s.total + " " + tier(s.total); }, "60 High"],
+    ["Long-standing Month-to-Month, quiet (48 months, 0 tickets)", function () { var s = score({ contract: "Month-to-Month", tenure: 48, tickets: 0 }); return s.total + " " + tier(s.total); }, "40 Medium"],
+    ["Tier boundary: 29 points", function () { return tier(29); }, "Low"],
+    ["Tier boundary: 30 points", function () { return tier(30); }, "Medium"],
+    ["Tier boundary: 59 points", function () { return tier(59); }, "Medium"],
+    ["Tier boundary: 60 points", function () { return tier(60); }, "High"],
+    ["Missing tenure returns no score", function () { return score({ contract: "One Year", tenure: NaN, tickets: 1 }) === null ? "no score" : "scored"; }, "no score"],
+    ["Negative tickets returns no score", function () { return score({ contract: "One Year", tenure: 5, tickets: -1 }) === null ? "no score" : "scored"; }, "no score"],
+    ["Unknown contract returns no score", function () { return score({ contract: "Weekly", tenure: 5, tickets: 1 }) === null ? "no score" : "scored"; }, "no score"],
+    ["Segment priority: Two Year, 3 months, 4 tickets", function () { return segOf({ contract: "Two Year", tenure: 3, tickets: 4 }).name; }, "Early and frustrated"]
+  ];
+  var tr = '<thead><tr><th>Case</th><th>Expected</th><th>Actual</th><th>Result</th></tr></thead><tbody>', passed = 0;
+  TESTS.forEach(function (t) {
+    var a = t[1](); var ok = String(a) === String(t[2]); if (ok) passed++;
+    tr += "<tr><td>" + t[0] + '</td><td class="nw">' + t[2] + '</td><td class="nw">' + a + '</td><td><span class="pill ' + (ok ? "pass" : "fail") + '">' + (ok ? "Pass" : "Fail") + "</span></td></tr>";
+  });
+  $("tests").innerHTML = tr + '<tr><td colspan="4"><strong>' + passed + ' of ' + TESTS.length + ' checks passed</strong></td></tr></tbody>';
+
+  /* ---------- Customer table ---------- */
+  var ct = '<thead><tr><th>Customer</th><th>Segment</th><th>Contract</th><th class="n">Tenure</th><th class="n">Tickets</th><th>Score</th><th>Tier</th><th>Actual</th></tr></thead><tbody>';
+  RAW.slice().sort(function (a, b) { return b.score - a.score || a.id.localeCompare(b.id); }).forEach(function (c) {
+    var col = c.tier === "High" ? "var(--churn)" : c.tier === "Medium" ? "var(--warn)" : "var(--keep)";
+    ct += "<tr><td class='nw'>" + c.id + "</td><td>" + c.seg.name + "</td><td class='nw'>" + c.contract + '</td><td class="n">' + c.tenure + '</td><td class="n">' + c.tickets +
+      '</td><td><div class="scorebar"><div class="track"><div style="width:' + c.score + '%;background:' + col + ';height:100%"></div></div><span>' + c.score + '</span></div></td>' +
+      '<td><span class="pill ' + c.tier + '">' + c.tier + '</span></td><td><span class="pill ' + (c.churned ? "yes" : "no") + '">' + (c.churned ? "Churned" : "Retained") + "</span></td></tr>";
+  });
+  $("custs").innerHTML = ct + "</tbody>";
+})();
+</script>
+</body>
+</html>
